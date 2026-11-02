@@ -75,6 +75,10 @@ const RED_ENC_FLAC16 = "Lossless"
 const RED_ENC_CBR320 = "320"
 const RED_ENC_VBRV0 = "V0 (VBR)"
 
+// the tracker rejects torrents containing any file path longer than this
+// many (UTF-8) bytes.
+const MAX_TORRENT_PATH_BYTES = 180
+
 const LAME_ARGS = {
   [RED_ENC_VBRV0]: "-V0 -h -S",
   [RED_ENC_CBR320]: "-b 320 -h -S",
@@ -131,10 +135,8 @@ async function* traverseFiles(baseDir) {
   }
 }
 
-// Copy additional (non-music) files too. Only moving png and jpegs right now,
-// anything else missing?
-async function copyOtherFiles(outDir, inDir, media) {
-  const tasks = []
+// Yields the relative paths of the additional (non-music) files to be copied.
+async function* listExtraFiles(inDir, media) {
   const incFileExts = [".png", ".jpg", ".jpeg", ".pdf"]
   if (!["CD", "WEB"].includes(media)) {
     incFileExts.push(".txt") // include lineage.txt
@@ -143,10 +145,18 @@ async function copyOtherFiles(outDir, inDir, media) {
     if (!incFileExts.includes(path.extname(file))) {
       continue
     }
-    const src = path.join(inDir, dir, file)
-    const dst = path.join(outDir, dir, file)
-    await mkdirpMaybe(path.join(outDir, dir))
-    tasks.push(fs.copyFile(src, dst))
+    yield dir === "." ? file : path.join(dir, file)
+  }
+}
+
+// Copy additional (non-music) files too. Only moving png and jpegs right now,
+// anything else missing?
+async function copyOtherFiles(outDir, inDir, media) {
+  const tasks = []
+  for await (const rel of listExtraFiles(inDir, media)) {
+    const dst = path.join(outDir, rel)
+    await mkdirpMaybe(path.dirname(dst))
+    tasks.push(fs.copyFile(path.join(inDir, rel), dst))
   }
   return Promise.all(tasks)
 }
@@ -298,6 +308,38 @@ function shouldMakeFLAC(torrent, editionGroup, analyzedFiles) {
   return !encExists(RED_ENC_FLAC16, editionGroup)
 }
 
+// The tracker rejects any torrent containing a file path longer than
+// MAX_TORRENT_PATH_BYTES. Paths are measured as '<top folder name>/<relative
+// path>' (the top folder name is the torrent name). Measure in UTF-8 bytes to
+// be conservative: it may block a release the tracker would accept (non-ASCII
+// names), but never let one through that it would reject.
+async function checkTorrentPathLengths(transcodeTasks, inDir, media, analyzedFiles) {
+  const extraFiles = []
+  for await (const rel of listExtraFiles(inDir, media)) extraFiles.push(rel)
+  const errors = []
+  for (const { outDir, bitrate } of transcodeTasks) {
+    const dirname = path.basename(outDir)
+    // predicted in-torrent paths: transcodes mirror the source relative tree,
+    // only the audio extension changes (flac2mp3: .flac -> .mp3)
+    const rels = analyzedFiles
+      .map(({ path: p }) => (bitrate === RED_ENC_FLAC16 ? p : p.replace(/\.flac$/i, ".mp3")))
+      .concat(extraFiles)
+    for (const rel of rels) {
+      const len = Buffer.byteLength(`${dirname}/${rel}`, "utf8")
+      if (len > MAX_TORRENT_PATH_BYTES) {
+        errors.push(`  ${DIRNAME_FORMAT[bitrate]}: ${dirname}/${rel} (${len} bytes)`)
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(
+      `[!] Torrent file path(s) exceed RED's ${MAX_TORRENT_PATH_BYTES}-char limit:\n` +
+        errors.join("\n") +
+        "\nRename the offending release or track file(s) in the source directory and re-run.",
+    )
+  }
+}
+
 async function main() {
   await fs.access(FLAC2MP3)
   await ensureDir(TRANSCODE_DIR)
@@ -392,6 +434,10 @@ async function main() {
     })
   }
 
+  // abort before any transcoding if a generated torrent would be rejected
+  // for containing a file path that is too long
+  await checkTorrentPathLengths(transcodeTasks, FLAC_DIR, torrent.media, analyzedFiles)
+
   const files = []
   for (const t of transcodeTasks) {
     const { outDir, doTranscode, message, format, bitrate, skipUpload } = t
@@ -481,6 +527,7 @@ async function main() {
 
 ;(async () => {
   await main().catch((err) => {
+    process.exitCode = 1
     console.error(`${SCRIPT_NAME} failed`)
     console.error(err.message)
     verboseLog(err)
