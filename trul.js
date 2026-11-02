@@ -47,6 +47,7 @@ const createTorrent = promisify(_createTorrent)
 
 const {
   ALWAYS_TRANSCODE,
+  DIRNAME_OVERRIDE,
   FLAC_DIR,
   API_KEY,
   TRANSCODE_DIR,
@@ -66,6 +67,12 @@ const {
 // API_KEY requires 'Torrents' permission.
 if (!API_KEY) {
   console.error("Missing required argument '--api-key'. Try '--help' for help")
+  process.exit(1)
+}
+
+// A whitespace-only --dirname would yield a meaningless name like '[WEB V0]'.
+if (typeof DIRNAME_OVERRIDE === "string" && !DIRNAME_OVERRIDE.trim()) {
+  console.error("Argument '--dirname' must not be empty")
   process.exit(1)
 }
 
@@ -215,27 +222,33 @@ function formatArtist(group) {
   else return "Various Artists"
 }
 
-function formatDirname(group, torrent, bitrate) {
-  const format = DIRNAME_FORMAT[bitrate]
-  // will make dirs for FLAC, V0 and 320 transcodes using this as base
-  let dirname = `${formatArtist(group)} - ${group.name}`
-  if (torrent.remasterTitle) {
-    // e.g., "Special Edition"
-    dirname += ` (${torrent.remasterTitle})`
-  }
-
-  const year = torrent.remasterYear || group.year
-  if (year) {
-    dirname += ` (${year})`
-  }
-
-  return `${dirname} [${torrent.media} ${format}]`
+const sanitizeDirname = (name) =>
+  name
     .replace(/\//g, "∕") // Note that is not a normal / but a utf-8 one
     .replace(/^~/, "")
     .replace(/\.$/g, "_")
     .replace(/[\x01-\x1f]/g, "_")
     .replace(/[<>:"?*|]/g, "_")
     .trim()
+
+function formatDirname(group, torrent, bitrate, dirnameOverride) {
+  const format = DIRNAME_FORMAT[bitrate]
+  // will make dirs for FLAC, V0 and 320 transcodes using this as base
+  let dirname = dirnameOverride
+  if (!dirnameOverride) {
+    dirname = `${formatArtist(group)} - ${group.name}`
+    if (torrent.remasterTitle) {
+      // e.g., "Special Edition"
+      dirname += ` (${torrent.remasterTitle})`
+    }
+
+    const year = torrent.remasterYear || group.year
+    if (year) {
+      dirname += ` (${year})`
+    }
+  }
+
+  return sanitizeDirname(`${dirname} [${torrent.media} ${format}]`)
 }
 
 function findMissingTags(tags) {
@@ -335,7 +348,7 @@ async function checkTorrentPathLengths(transcodeTasks, inDir, media, analyzedFil
     throw new Error(
       `[!] Torrent file path(s) exceed RED's ${MAX_TORRENT_PATH_BYTES}-char limit:\n` +
         errors.join("\n") +
-        "\nRename the offending release or track file(s) in the source directory and re-run.",
+        "\nRename the offending release or track file(s) in the source directory and re-run, or try a shorter --dirname override.",
     )
   }
 }
@@ -384,7 +397,7 @@ async function main() {
   if (shouldMakeFLAC(torrent, editionGroup, analyzedFiles)) {
     const outDir = path.join(
       TRANSCODE_DIR,
-      formatDirname(group, torrent, RED_ENC_FLAC16),
+      formatDirname(group, torrent, RED_ENC_FLAC16, DIRNAME_OVERRIDE),
     )
     transcodeTasks.push({
       skipUpload: NO_UPLOAD || encExists(RED_ENC_FLAC16, editionGroup),
@@ -404,7 +417,7 @@ async function main() {
       (bitrate == RED_ENC_CBR320 && NO_320) ||
       (bitrate == RED_ENC_VBRV0 && NO_V0) ||
       mp3incompatible
-    const dirname = formatDirname(group, torrent, bitrate)
+    const dirname = formatDirname(group, torrent, bitrate, DIRNAME_OVERRIDE)
     const exists = encExists(bitrate, editionGroup)
     if (skip) {
       verboseLog(`Won't create ${dirname}`)

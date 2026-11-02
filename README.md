@@ -40,6 +40,8 @@ Options:
                           _KEY
   -o, --torrent-dir       Where to output torrent files           [default: "."]
   -t, --transcode-dir     Output directory of transcodes
+      --dirname           Override the derived output directory name; '[<media>
+                          <format>]' suffix is appended per encoding
       --no-flac           Don't transcode into FLAC                    [boolean]
       --no-v0             Don't transcode into V0                      [boolean]
       --no-320            Don't transcode into 320                     [boolean]
@@ -82,6 +84,21 @@ red-trul --info-hash=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
 # [-] Write torrents to /home/lfen/rtorrent/watch/...
 # [*] Done!
 ```
+
+### Overriding the output directory name
+
+RED's tracker rejects torrents containing a file path longer than 180 bytes.
+If the derived directory name is too long (and the source directory cannot be
+renamed), override it with `--dirname`:
+
+```bash
+red-trul --info-hash=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+    --dirname 'Shorter Artist - Short Album' flac-dir
+```
+
+The `[<media> <format>]` suffix (`[WEB V0]`, `[WEB 320]`, `[WEB FLAC16]`) is
+still appended per encoding. Re-running the same release requires the *same*
+`--dirname` to stay name-consistent with previously uploaded encodings.
 
 ## Advanced: post-download hook and watch directory.
 

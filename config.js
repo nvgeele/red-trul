@@ -18,6 +18,8 @@ const _initConfig = (argv) => {
     FLAC_DIR,
     // transcode output
     TRANSCODE_DIR: argv["transcode-dir"] || path.dirname(FLAC_DIR ?? ""),
+    // output directory name override
+    DIRNAME_OVERRIDE: argv["dirname"],
     // torrent output
     TORRENT_DIR: argv["torrent-dir"],
     SOX: getEnv("SOX_PATH") || "sox",
@@ -56,6 +58,10 @@ export const initConfig = () => {
     .option("transcode-dir", {
       alias: "t",
       describe: "Output directory of transcodes",
+    })
+    .option("dirname", {
+      describe:
+      "Override the derived output directory name; '[<media> <format>]' suffix is appended per encoding",
     })
     .option("no-flac", {
       describe: "Don't transcode into FLAC",
